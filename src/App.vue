@@ -3,16 +3,28 @@
     <h1>🏆 Таблиця множення — майстер</h1>
 
     <div class="statusbar">
-      <span class="chip">⭐ {{ stars }}</span>
-      <span class="chip">❌ {{ errors }}</span>
-      <span class="chip">Вивчено: {{ removed.size }} / {{ allResults.length }}</span>
+      <span class="chip">⭐ {{ displayStars }}</span>
+      <span class="chip">❌ {{ displayErrors }}</span>
+      <span class="chip">Вивчено: {{ displayDone }} / {{ displayTotal }}</span>
+      <span class="chip ver-chip">Варіант:</span>
+      <button
+        class="btn small ver"
+        :class="{ active: version === 1 }"
+        @click="switchVersion(1)"
+      >1</button>
+      <button
+        class="btn small ver"
+        :class="{ active: version === 2 }"
+        @click="switchVersion(2)"
+      >2</button>
       <button class="btn small" @click="showSettings = true">⚙️ Рівні</button>
-      <button class="btn small" @click="resetAll">🔄 Спочатку</button>
+      <button class="btn small" @click="resetCurrent">🔄 Спочатку</button>
     </div>
 
-    <p class="hint">Обери число зліва, потім справа, а потім знайди відповідь!</p>
+    <p class="hint">{{ hintText }}</p>
 
-    <div class="tables">
+    <!-- ================= ВАРІАНТ 1: дві таблиці чисел + результати ================= -->
+    <div v-if="version === 1" class="tables">
       <div class="table-card">
         <h2>Число 1</h2>
         <div class="grid numbers-grid">
@@ -63,6 +75,26 @@
       </div>
     </div>
 
+    <!-- ================= ВАРІАНТ 2: одна змішана таблиця, трійки в будь-якому порядку ================= -->
+    <div v-else class="tables">
+      <div class="table-card mix-card">
+        <h2>Знайди трійку: множник × множник = відповідь</h2>
+        <div class="grid mix-grid">
+          <button
+            v-for="cell in visibleMixCells"
+            :key="cell.id"
+            class="cell mix-cell"
+            :class="mixCellClass(cell)"
+            :style="mixCellStyle(cell)"
+            @click="pickMix(cell)"
+          >{{ cell.value }}</button>
+        </div>
+        <p v-if="resultsLeft === 0" class="win-note">
+          🎉 Все вивчено! Ти чемпіон!
+        </p>
+      </div>
+    </div>
+
     <div class="feedback" :class="feedback.type" v-if="feedback.text">{{ feedback.text }}</div>
 
     <div class="confetti-wrap" v-if="confetti.length">
@@ -96,27 +128,43 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-/* ---------------- state ---------------- */
+/* ---------------- shared state ---------------- */
 const activeLevels = ref([2, 3, 4, 5])
 const levelsTmp = ref([...activeLevels.value])
 const showSettings = ref(false)
 
+const version = ref(1)   // 1 = класика (дві таблиці), 2 = одна змішана таблиця
+
+const colorIdx = ref(0)
+const feedback = ref({ type: '', text: '' })
+const confetti = ref([])
+const resolveLock = ref(false)
+
+/* ---------------- version 1 state ---------------- */
 const leftSel = ref(null)
 const rightSel = ref(null)
 const removed = ref(new Set())       // mastered result values
 const resultFlash = ref(null)        // value of just-picked (correct) result
 const wrongFlash = ref(null)         // value of wrong-picked result
-const resolveLock = ref(false)
 
 const stars = ref(0)
 const errors = ref(0)
-const colorIdx = ref(0)
 
-const feedback = ref({ type: '', text: '' })
-const confetti = ref([])
+/* ---------------- version 2 state ---------------- */
+const mixCells = ref([])             // [{ id, value }] — анонімні числа, перемішані
+const pendingResults = ref([])       // добутки, які ще треба розв'язати (по одному на рівність)
+const usedTriplets = ref(new Set())  // вже вивчені трійки «a×b=p» (множники сортовані):
+                                     // дзеркальна трійка (3,2,6) = та сама, що (2,3,6) —
+                                     // повторно НЕ зараховується, щоб не зіпсувати решту варіантів
+const mixSel = ref([])               // ids of currently selected cells (up to 3)
+const mixFlash = ref([])             // ids of the correct triplet being celebrated
+const mixWrong = ref([])             // ids of the wrong triplet being shaken
+
+const v2Stars = ref(0)
+const v2Errors = ref(0)
 
 /* ---------------- palette ----------------
-   Every completed pick (left + right + result) is marked with the SAME color.
+   Every completed pick is marked with the SAME color.
    The color rotates each round so matches stay visually distinct. */
 const COLORS = [
   { bg: '#ffd6e0', border: '#ff8fab', text: '#8a1c3b' }, // pink
@@ -127,7 +175,7 @@ const COLORS = [
   { bg: '#ffe8cc', border: '#ffa94d', text: '#d9480f' }, // orange
 ]
 
-/* ---------------- derived ---------------- */
+/* ---------------- derived (shared) ---------------- */
 const activeNumbers = computed(() =>
   [...activeLevels.value].sort((a, b) => a - b)
 )
@@ -139,17 +187,54 @@ const allResults = computed(() => {
   return [...s].sort((x, y) => x - y)
 })
 
+const curColor = computed(() => COLORS[colorIdx.value % COLORS.length])
+
+const displayStars = computed(() => (version.value === 1 ? stars.value : v2Stars.value))
+const displayErrors = computed(() => (version.value === 1 ? errors.value : v2Errors.value))
+const displayDone = computed(() =>
+  version.value === 1 ? removed.value.size : v2Equations.value.length - pendingResults.value.length
+)
+const displayTotal = computed(() =>
+  version.value === 1 ? allResults.value.length : v2Equations.value.length
+)
+
+const hintText = computed(() =>
+  version.value === 1
+    ? 'Обери число зліва, потім справа, а потім знайди відповідь!'
+    : 'Усі числа перемішані! Обери три числа: два множники та їхній добуток — у будь-якому порядку.'
+)
+
+/* ---------------- derived (version 1) ---------------- */
 const availableResults = computed(() =>
   allResults.value.filter(r => !removed.value.has(r))
 )
 
-const curColor = computed(() => COLORS[colorIdx.value % COLORS.length])
 const bothPicked = computed(() => leftSel.value !== null && rightSel.value !== null)
 const target = computed(() =>
   bothPicked.value ? leftSel.value * rightSel.value : null
 )
 
-/* ---------------- selection ---------------- */
+/* ---------------- derived (version 2) ----------------
+   Рівняння = рівень × 2..9, по одному на кожен обраний рядок.
+   Якщо добуток зустрічається в кількох рядках (для рівнів 3, 6, 9:
+   3×6=18, 6×3=18, 9×2=18), кожна рівність дає СВОЮ плитку «18» на дошці. */
+const v2Range = Array.from({ length: 8 }, (_, i) => i + 2)
+
+const v2Equations = computed(() => {
+  const eqs = []
+  for (const a of activeNumbers.value)
+    for (const b of v2Range) eqs.push({ a, b, p: a * b })
+  return eqs
+})
+
+const resultsLeft = computed(() => pendingResults.value.length)
+
+const visibleMixCells = computed(() => {
+  if (resultsLeft.value === 0) return []        // все вивчено — дошка порожня
+  return mixCells.value
+})
+
+/* ---------------- selection (version 1) ---------------- */
 function feedbackMsg(type, text) {
   feedback.value = { type, text }
 }
@@ -205,7 +290,165 @@ function selectResult(r) {
   }
 }
 
-/* ---------------- visuals ---------------- */
+/* ---------------- selection (version 2) ---------------- */
+function pickMix(cell) {
+  if (resolveLock.value) return
+  const idx = mixSel.value.indexOf(cell.id)
+  if (idx >= 0) {                          // toggle off
+    mixSel.value.splice(idx, 1)
+    return
+  }
+  if (mixSel.value.length >= 3) return     // three are already picked
+  mixSel.value.push(cell.id)
+  feedbackMsg('', '')
+  if (mixSel.value.length === 3) evaluateMix()
+}
+
+function evaluateMix() {
+  const sel = mixSel.value.map(id => mixCells.value.find(c => c.id === id))
+  // трійка валідна «на льоту»: два найменші числа — множники, найбільше — добуток,
+  // і хоча б один множник належить обраним рівням (інший — співмножник 2..10)
+  const vals = sel.map(c => c.value).sort((a, b) => a - b)
+  const levels = activeNumbers.value
+  const ok = vals.length === 3 &&
+             vals[0] * vals[1] === vals[2] &&
+             (levels.includes(vals[0]) || levels.includes(vals[1]))
+
+  // дзеркальний захист: цю трійку вже вивчено (у будь-якому порядку множників)
+  // — не зараховуємо повторно, плитки залишаються на місці
+  const key = `${vals[0]}x${vals[1]}=${vals[2]}`
+  if (ok && usedTriplets.value.has(key)) {
+    feedbackMsg('info', `${vals[0]} × ${vals[1]} = ${vals[2]} уже вивчено — обери іншу трійку 🙂`)
+    mixSel.value = []
+    return
+  }
+
+  if (ok) {
+    mixFlash.value = sel.map(c => c.id)
+    v2Stars.value++
+    resolveLock.value = true
+    feedbackMsg('ok', `Так! ${vals[0]} × ${vals[1]} = ${vals[2]} 🎉`)
+    playTone(true)
+    burstConfetti()
+    setTimeout(() => {
+      // дзеркальна трійка (3,2,6) = та сама, що (2,3,6): зберігаємо в сортованому
+      // вигляді й зараховуємо ОДИН раз — зникають усі рівності цієї трійки
+      const key = `${vals[0]}x${vals[1]}=${vals[2]}`
+      if (!usedTriplets.value.has(key)) {
+        usedTriplets.value = new Set([...usedTriplets.value, key])
+        const eqs = v2Equations.value.filter(e =>
+          e.p === vals[2] && ((e.a === vals[0] && e.b === vals[1]) || (e.a === vals[1] && e.b === vals[0])))
+        for (const eq of eqs) {
+          const i = pendingResults.value.indexOf(eq)
+          if (i >= 0) pendingResults.value.splice(i, 1)
+        }
+      }
+      const gone = new Set(sel.map(c => c.id))
+      mixCells.value = mixCells.value.filter(c => !gone.has(c.id))  // усі три плитки зникають
+      ensureSolvable()
+      mixFlash.value = []
+      mixSel.value = []
+      colorIdx.value++
+      resolveLock.value = false
+      feedbackMsg('', '')
+    }, 750)
+  } else {
+    mixWrong.value = sel.map(c => c.id)
+    v2Errors.value++
+    feedbackMsg('err', 'Не збіглося! Потрібно: два множники та їхній добуток 🙂')
+    playTone(false)
+    setTimeout(() => {
+      mixWrong.value = []
+      mixSel.value = []
+    }, 450)
+  }
+}
+
+/* ---------------- version 2 table generation ----------------
+   Дошка — анонімний перемішаний пул чисел: множники 2..9 (плюс самі рівні)
+   та добутки рівнянь. Жодних позначок «результат» — трійка перевіряється
+   «на льоту»: два найменші числа мають дати найбільше.
+   Кожна рівність (рівень × 2..9) дає на дошці СВОЮ плитку-добуток:
+   для рівнів 3, 6, 9 на дошці є ТРИ плитки «18» (3×6, 6×3, 9×2).
+   Плитки-множники stocking так само на рівність:
+   - плитка v потрібна один раз на кожну рівність, де v бере участь,
+   - плюс одна додаткова для квадрата (2×2=4 з'їдає дві плитки «2» одразу). */
+function buildMixCells() {
+  const eqs = v2Equations.value
+  const levels = activeNumbers.value
+  const values = [...new Set([...v2Range, ...activeNumbers.value])]
+  const cells = []
+  for (const v of values) {
+    let count = 0
+    for (const e of eqs) {
+      if (e.a === v) count++           // v — рівень цієї рівності
+      else if (e.b === v) count++      // v — співмножник
+    }
+    // квадрат: 2×2=4 — одна рівність споживає ДВІ плитки «2»
+    if (levels.includes(v) && eqs.some(e => e.a === v && e.b === v)) count++
+    for (let i = 0; i < count; i++) {
+      cells.push({ id: `F${v}_${i}`, value: v })
+    }
+  }
+  for (const e of eqs) {
+    cells.push({ id: `R${e.a}x${e.b}`, value: e.p })
+  }
+  mixCells.value = shuffle(cells)
+}
+
+function shuffle(arr) {
+  const a = [...arr]
+  for (let i = 0; i < a.length; i++) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+function freePairExists(p) {
+  const free = mixCells.value.filter(c => !mixSel.value.includes(c.id))
+  const levels = activeNumbers.value
+  for (let i = 0; i < free.length; i++) {
+    for (let j = i + 1; j < free.length; j++) {
+      const x = free[i].value, y = free[j].value
+      if (x * y !== p) continue
+      // додаткова перевірка валідності, як в evaluateMix:
+      // хоча б один множник належить обраним рівням
+      if (!(levels.includes(x) || levels.includes(y))) continue
+      // дзеркальний захист: пару, яку вже вивчено, не рахуємо доступною
+      const key = `${Math.min(x, y)}x${Math.max(x, y)}=${p}`
+      if (usedTriplets.value.has(key)) continue
+      return true
+    }
+  }
+  return false
+}
+
+/* Гарантія розв'язності: після кожного розв'язаного добутку перевіряємо,
+   що кожна нерозв'язана рівність має на дошці свою плитку-добуток і вільну
+   пару множників. Якщо ні (плитку з'їли як співмножник, або пару витратили)
+   — тихо повертаємо бракуючі плитки на дошку. */
+function ensureSolvable() {
+  for (const e of v2Equations.value) {
+    if (!pendingResults.value.some(pe => pe.a === e.a && pe.b === e.b)) continue
+    // плитка-добуток цієї рівності може бути з'їдена як множник — повертаємо
+    if (!mixCells.value.some(c => c.value === e.p)) {
+      mixCells.value = shuffle([
+        ...mixCells.value,
+        { id: `R${e.a}x${e.b}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.p },
+      ])
+    }
+    if (freePairExists(e.p)) continue
+    // повертаємо пару рівня + співмножника
+    mixCells.value = shuffle([
+      ...mixCells.value,
+      { id: `F${e.a}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.a },
+      { id: `F${e.b}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.b },
+    ])
+  }
+}
+
+/* ---------------- visuals (version 1) ---------------- */
 function cellClass(n, side) {
   const sel = side === 'left' ? leftSel.value : rightSel.value
   return {
@@ -236,6 +479,25 @@ function resultClass(r) {
 function resultStyle(r) {
   if (resultFlash.value === r) {
     return { background: curColor.value.bg, borderColor: curColor.value.border, color: curColor.value.text }
+  }
+  return {}
+}
+
+/* ---------------- visuals (version 2) ---------------- */
+function mixCellClass(cell) {
+  return {
+    selected: mixSel.value.includes(cell.id),
+    flash: mixFlash.value.includes(cell.id),
+    wrong: mixWrong.value.includes(cell.id),
+  }
+}
+
+function mixCellStyle(cell) {
+  if (mixFlash.value.includes(cell.id)) {
+    return { background: curColor.value.bg, borderColor: curColor.value.border, color: curColor.value.text }
+  }
+  if (mixSel.value.includes(cell.id)) {
+    return { borderColor: curColor.value.border, boxShadow: `inset 0 0 0 3px ${curColor.value.bg}` }
   }
   return {}
 }
@@ -274,11 +536,23 @@ function playTone(good) {
   } catch { /* audio not available — game still works */ }
 }
 
+function switchVersion(v) {
+  if (version.value === v) return
+  version.value = v
+  feedbackMsg('', '')
+  // перший вхід у v2, якщо дошку ще не будували для поточних рівнів
+  if (v === 2 && mixCells.value.length === 0 && resultsLeft.value === 0 && v2Equations.value.length > 0 && pendingResults.value.length === 0) {
+    pendingResults.value = [...v2Equations.value]
+    buildMixCells()
+  }
+}
+
 function applyLevels() {
   if (levelsTmp.value.length === 0) return
   activeLevels.value = [...levelsTmp.value].sort((a, b) => a - b)
   showSettings.value = false
   resetAll()
+  resetMix()
 }
 
 function resetAll() {
@@ -287,16 +561,33 @@ function resetAll() {
   removed.value = new Set()
   resultFlash.value = null
   wrongFlash.value = null
-  resolveLock.value = false
   stars.value = 0
   errors.value = 0
   colorIdx.value = 0
   confetti.value = []
+  resolveLock.value = false
   feedbackMsg('', '')
+}
+
+function resetMix() {
+  mixSel.value = []
+  mixFlash.value = []
+  mixWrong.value = []
+  usedTriplets.value = new Set()
+  pendingResults.value = [...v2Equations.value]
+  v2Stars.value = 0
+  v2Errors.value = 0
+  buildMixCells()
+}
+
+function resetCurrent() {
+  if (version.value === 1) resetAll()
+  else resetMix()
 }
 
 onMounted(() => {
   levelsTmp.value = [...activeLevels.value]
+  resetMix()
 })
 </script>
 
@@ -319,6 +610,7 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
   background: #fff; border: 2px solid #e0e0e0; border-radius: 999px;
   padding: 4px 12px; font-weight: 600; font-size: 0.95rem;
 }
+.ver-chip { border-style: dashed; }
 .btn {
   border: none; border-radius: 10px; padding: 8px 16px;
   background: #74c0fc; color: #fff; font-weight: 700; cursor: pointer;
@@ -327,6 +619,8 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .btn:hover { filter: brightness(0.95); }
 .btn.small { padding: 4px 10px; font-size: 0.85rem; }
 .btn.ghost { background: #e9ecef; color: #495057; }
+.btn.ver { background: #e9ecef; color: #495057; border-radius: 999px; min-width: 34px; }
+.btn.ver.active { background: #74c0fc; color: #fff; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .tables {
@@ -344,6 +638,10 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .grid { display: grid; gap: 8px; }
 .numbers-grid { grid-template-columns: repeat(2, 72px); }
 .results-grid { grid-template-columns: repeat(4, 72px); }
+.mix-grid {
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  width: min(720px, 86vw);
+}
 
 .cell {
   border: 2px solid #dee2e6; border-radius: 12px;
@@ -357,6 +655,8 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .cell.otherSide { opacity: 0.75; }
 .result-cell { height: 52px; font-size: 1.25rem; }
 
+.mix-card { display: flex; flex-direction: column; align-items: center; }
+.mix-cell { height: 52px; font-size: 1.3rem; }
 .cell.flash { animation: pop 0.25s ease; }
 .cell.wrong { animation: shake 0.4s ease; background: #ffc9c9 !important; border-color: #fa5252 !important; color: #c92a2a !important; }
 
