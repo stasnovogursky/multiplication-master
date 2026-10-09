@@ -215,15 +215,21 @@ const target = computed(() =>
 )
 
 /* ---------------- derived (version 2) ----------------
-   Рівняння = рівень × 2..9, по одному на кожен обраний рядок.
-   Якщо добуток зустрічається в кількох рядках (для рівнів 3, 6, 9:
-   3×6=18, 6×3=18, 9×2=18), кожна рівність дає СВОЮ плитку «18» на дошці. */
+   Рівняння = рівень × 2..9, БЕЗ дзеркал: 6×3 — та сама трійка, що 3×6,
+   тому тримаємо лише один порядок (a < b, коли обидва множники — рівні).
+   Для рівнів 3, 6, 9 добуток 18 дають рівно ДВІ трійки: (3,6) та (9,2) —
+   дві плитки «18» на дошці. */
 const v2Range = Array.from({ length: 8 }, (_, i) => i + 2)
 
 const v2Equations = computed(() => {
   const eqs = []
+  const levels = new Set(activeNumbers.value)
   for (const a of activeNumbers.value)
-    for (const b of v2Range) eqs.push({ a, b, p: a * b })
+    for (const b of v2Range) {
+      // дзеркало вже є як (b, a): пропускаємо старший порядок
+      if (a > b && levels.has(b)) continue
+      eqs.push({ a, b, p: a * b })
+    }
   return eqs
 })
 

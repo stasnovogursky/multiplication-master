@@ -115,7 +115,7 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     expect(w.find('.feedback').classes().join(' ')).toContain('err')
 
     await waitResolve(600)
-    expect(w.vm.pendingResults.length).toBe(32)
+    expect(w.vm.pendingResults.length).toBe(26)
     expect(w.vm.mixSel.length).toBe(0)
     // both 6 and 8 still on the board
     expect(tileIdForProduct(w, 6)).not.toBe(null)
@@ -172,11 +172,12 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     for (const p of ['49', '56', '64', '72']) expect(texts).toContain(p)
     expect(texts).not.toContain('80')  // ×10 більше немає
     expect(texts).not.toContain('11')
-    // per-equation model: 16 result tiles (one per equation), only 56 duplicated
+    // mirror-free model: 15 equations (8×7 dropped as mirror of 7×8) → 15 result tiles,
+    // all unique — 56 appears once (7×8 only)
     const results = w.vm.mixCells.filter(c => c.value >= 14).map(c => c.value)
-    expect(results.length).toBe(16)
+    expect(results.length).toBe(15)
     expect(new Set(results).size).toBe(15)
-    expect(results.filter(v => v === 56).length).toBe(2)
+    expect(results.filter(v => v === 56).length).toBe(1)
   })
 
   it('solved triplets remove ALL three tiles; board empties with a win note (level 2)', async () => {
@@ -299,8 +300,8 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     expect(w.vm.v2Errors).toBe(errorsBefore)
     expect(w.vm.mixCells.map(c => c.id)).toEqual(boardBefore)
     expect(w.vm.mixSel.length).toBe(0)
-    // mirror-aware: the solve retires BOTH 2×3 and 3×2 → 32 − 2 = 30 pending
-    expect(w.vm.pendingResults.length).toBe(30)
+    // mirror-aware: the solve retires the 2×3 equation → 26 − 1 = 25 pending
+    expect(w.vm.pendingResults.length).toBe(25)
   }, 45000)
 
   it('duplicate products appear once per equation (3, 6, 9 → three 18-tiles)', async () => {
@@ -310,13 +311,13 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     await flushPromises()
 
     const texts = w.vm.mixCells.map(c => String(c.value))
-    // three equations give 18: 3×6, 6×3, 9×2 → three "18" tiles on the board
-    expect(texts.filter(t => t === '18').length).toBe(3)
-    // equations with p ≥ 12: 3×4..3×9 (6) + 6×2..6×9 (8) + 9×2..9×9 (8) = 22 tiles
-    expect(w.vm.mixCells.filter(c => c.value >= 12).length).toBe(22)
-    // 3×6 and 6×3 are two separate equations → two "3" and two "6" factor tiles
-    expect(texts.filter(t => t === '3').length).toBeGreaterThanOrEqual(2)
-    expect(texts.filter(t => t === '6').length).toBeGreaterThanOrEqual(2)
+    // mirrors excluded at generation: exactly TWO triplets give 18 — (3,6) and (9,2)
+    expect(texts.filter(t => t === '18').length).toBe(2)
+    // equations with p ≥ 12: 3×4..3×9 (6) + 6×2..6×9 minus 6×3 (7) + 9×2..9×9 minus 9×3 (6) = 19 tiles
+    expect(w.vm.mixCells.filter(c => c.value >= 12).length).toBe(19)
+    // mirror-free: one "3" and one "6" factor tile stocking (3,6); 9×2 needs a "2"
+    expect(texts.filter(t => t === '3').length).toBeGreaterThanOrEqual(1)
+    expect(texts.filter(t => t === '6').length).toBeGreaterThanOrEqual(1)
 
     // solve 18 twice via different equations: 9×2 and 3×6 — both must work
     for (const pair of [[9, 2], [3, 6]]) {
@@ -330,8 +331,8 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
       await waitResolve()
       expect(w.vm.mixCells.filter(c => picked.includes(c.id)).length).toBe(0)
     }
-    // after two solves, one 18 remains on the board
-    expect(texts_after_one_left(w)).toBe(1)
+    // after both 18-equations are solved, no 18 remains — mirror-free retirement
+    expect(texts_after_one_left(w)).toBe(0)
   }, 45000)
 
   function texts_after_one_left(w) {
@@ -365,7 +366,7 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     await w.findAll('.btn').find(b => b.text().includes('Спочатку')).trigger('click')
     await flushPromises()
     expect(w.vm.v2Stars).toBe(0)
-    expect(w.vm.pendingResults.length).toBe(32)
+    expect(w.vm.pendingResults.length).toBe(26)
     // v1 progress untouched
     expect(w.vm.stars).toBe(1)
     expect(w.vm.removed.size).toBe(1)
