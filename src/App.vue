@@ -23,77 +23,10 @@
 
     <p class="hint">{{ hintText }}</p>
 
-    <!-- ================= VARIANT 1: two number tables + results ================= -->
-    <div v-if="version === 1" class="tables">
-      <div class="table-card">
-        <h2>Число 1</h2>
-        <div class="grid numbers-grid">
-          <button
-            v-for="n in allFactorNumbers"
-            :key="'L' + n"
-            class="cell"
-            :class="cellClass(n, 'left')"
-            :style="cellStyle(n, 'left')"
-            @click="selectLeft(n)"
-          >{{ n }}</button>
-        </div>
-      </div>
-
-      <div class="sign">×</div>
-
-      <div class="table-card">
-        <h2>Число 2</h2>
-        <div class="grid numbers-grid">
-          <button
-            v-for="n in allFactorNumbers"
-            :key="'R' + n"
-            class="cell"
-            :class="cellClass(n, 'right')"
-            :style="cellStyle(n, 'right')"
-            @click="selectRight(n)"
-          >{{ n }}</button>
-        </div>
-      </div>
-
-      <div class="sign">=</div>
-
-      <div class="table-card results-card">
-        <h2>Результат</h2>
-        <div class="grid results-grid">
-          <button
-            v-for="r in availableResults"
-            :key="r"
-            class="cell result-cell"
-            :class="resultClass(r)"
-            :style="resultStyle(r)"
-            @click="selectResult(r)"
-          >{{ r }}</button>
-        </div>
-        <p v-if="availableResults.length === 0" class="win-note">
-          🎉 Все вивчено! Ти чемпіон!
-        </p>
-      </div>
-    </div>
-
-    <!-- ================= VARIANT 2: one mixed table, triplets in any order ================= -->
-    <div v-else class="tables">
-      <div class="table-card mix-card">
-        <h2>Знайди трійку: множник × множник = відповідь</h2>
-        <div class="grid mix-grid">
-          <button
-            v-for="cell in visibleMixCells"
-            :key="cell.id"
-            class="cell mix-cell"
-            :class="mixCellClass(cell)"
-            :style="mixCellStyle(cell)"
-            @click="pickMix(cell)"
-          >{{ cell.value }}</button>
-        </div>
-        <p v-if="resultsLeft === 0" class="win-note">
-          🎉 Все вивчено! Ти чемпіон!
-        </p>
-      </div>
-    </div>
+    <KeepAlive>
+      <VersionClassic v-if="version === 1" />
+      <VersionMixed v-else />
+    </KeepAlive>
 
     <div class="feedback" :class="feedback.type" v-if="feedback.text">{{ feedback.text }}</div>
 
@@ -126,488 +59,39 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-
-/* ---------------- shared state ---------------- */
-const activeLevels = ref([2, 3, 4, 5])
-const levelsTmp = ref([...activeLevels.value])
-const showSettings = ref(false)
-
-const version = ref(1)   // 1 = classic (two factor tables), 2 = one mixed table
-
-const colorIdx = ref(0)
-const feedback = ref({ type: '', text: '' })
-const confetti = ref([])
-const resolveLock = ref(false)
-
-/* ---------------- version 1 state ---------------- */
-const leftSel = ref(null)
-const rightSel = ref(null)
-const removed = ref(new Set())       // mastered result values
-const resultFlash = ref(null)        // value of just-picked (correct) result
-const wrongFlash = ref(null)         // value of wrong-picked result
-
-const stars = ref(0)
-const errors = ref(0)
-
-/* ---------------- version 2 state ---------------- */
-const mixCells = ref([])             // [{ id, value }] — anonymous shuffled numbers
-const pendingResults = ref([])       // products still to solve (one per equation)
-const usedTriplets = ref(new Set())  // already-learned «a×b=p» triplets (factors sorted):
-                                     // a mirrored triplet (3,2,6) = same as (2,3,6) —
-                                     // NOT counted again, to keep the other variants intact
-const mixSel = ref([])               // ids of currently selected cells (up to 3)
-const mixFlash = ref([])             // ids of the correct triplet being celebrated
-const mixWrong = ref([])             // ids of the wrong triplet being shaken
-
-const v2Stars = ref(0)
-const v2Errors = ref(0)
-
-/* ---------------- palette ----------------
-   Every completed pick is marked with the SAME color.
-   The color rotates each round so matches stay visually distinct. */
-const COLORS = [
-  { bg: '#ffd6e0', border: '#ff8fab', text: '#8a1c3b' }, // pink
-  { bg: '#d0ebff', border: '#74c0fc', text: '#1864ab' }, // blue
-  { bg: '#d3f9d8', border: '#69db7c', text: '#2b8a3e' }, // green
-  { bg: '#fff3bf', border: '#ffd43b', text: '#997a00' }, // yellow
-  { bg: '#efe7ff', border: '#b197fc', text: '#5f3dc4' }, // violet
-  { bg: '#ffe8cc', border: '#ffa94d', text: '#d9480f' }, // orange
-]
-
-/* ---------------- derived (shared) ---------------- */
-// v1: left/right tables always show ALL factors 2..9 regardless of selected levels;
-// only the result table follows the level selection.
-const allFactorNumbers = Array.from({ length: 8 }, (_, i) => i + 2)
-
-const activeNumbers = computed(() =>
-  [...activeLevels.value].sort((a, b) => a - b)
-)
-
-const allResults = computed(() => {
-  const s = new Set()
-  // v1: results are level × any factor 2..9
-  for (const a of activeNumbers.value)
-    for (const b of allFactorNumbers) s.add(a * b)
-  return [...s].sort((x, y) => x - y)
-})
-
-const curColor = computed(() => COLORS[colorIdx.value % COLORS.length])
-
-const displayStars = computed(() => (version.value === 1 ? stars.value : v2Stars.value))
-const displayErrors = computed(() => (version.value === 1 ? errors.value : v2Errors.value))
-const displayDone = computed(() =>
-  version.value === 1 ? removed.value.size : v2Equations.value.length - pendingResults.value.length
-)
-const displayTotal = computed(() =>
-  version.value === 1 ? allResults.value.length : v2Equations.value.length
-)
-
-const hintText = computed(() =>
-  version.value === 1
-    ? 'Обери число зліва, потім справа, а потім знайди відповідь!'
-    : 'Усі числа перемішані! Обери три числа: два множники та їхній добуток — у будь-якому порядку.'
-)
-
-/* ---------------- derived (version 1) ---------------- */
-const availableResults = computed(() =>
-  allResults.value.filter(r => !removed.value.has(r))
-)
-
-const bothPicked = computed(() => leftSel.value !== null && rightSel.value !== null)
-const target = computed(() =>
-  bothPicked.value ? leftSel.value * rightSel.value : null
-)
-
-/* ---------------- derived (version 2) ----------------
-   Equations = level × 2..9, WITHOUT mirrors: 6×3 is the same triplet as 3×6,
-   so we keep only one order (a < b when both factors are levels).
-   For levels 3, 6, 9 the product 18 comes from exactly TWO triplets: (3,6) and (9,2) —
-   two «18» tiles on the board. */
-const v2Range = Array.from({ length: 8 }, (_, i) => i + 2)
-
-const v2Equations = computed(() => {
-  const eqs = []
-  const levels = new Set(activeNumbers.value)
-  for (const a of activeNumbers.value)
-    for (const b of v2Range) {
-      // mirror already exists as (b, a): skip the higher order
-      if (a > b && levels.has(b)) continue
-      eqs.push({ a, b, p: a * b })
-    }
-  return eqs
-})
-
-const resultsLeft = computed(() => pendingResults.value.length)
-
-const visibleMixCells = computed(() => {
-  if (resultsLeft.value === 0) return []        // all learned — board is empty
-  return mixCells.value
-})
-
-/* ---------------- selection (version 1) ---------------- */
-function feedbackMsg(type, text) {
-  feedback.value = { type, text }
-}
-
-function selectLeft(n) {
-  if (resolveLock.value) return
-  if (leftSel.value === n) { leftSel.value = null; return }      // toggle off
-  leftSel.value = n
-  feedbackMsg('', '')
-}
-
-function selectRight(n) {
-  if (resolveLock.value) return
-  if (rightSel.value === n) { rightSel.value = null; return }    // toggle off
-  const product = (leftSel.value ?? n) * n
-  if (leftSel.value !== null && removed.value.has(product)) {
-    feedbackMsg('info', `Супер! ${leftSel.value} × ${n} = ${product} уже вивчено — обери інший приклад 🙂`)
-    return
-  }
-  // a pair where neither factor belongs to the selected levels — its product
-  // isn't on the board, so hint right away instead of leaving a dead end
-  if (leftSel.value !== null &&
-      !activeNumbers.value.includes(leftSel.value) &&
-      !activeNumbers.value.includes(n)) {
-    feedbackMsg('info', `${leftSel.value} × ${n} не входить у вибрані рівні — хоча б один множник має бути з них 🙂`)
-    return
-  }
-  rightSel.value = n
-  feedbackMsg('', '')
-}
-
-function selectResult(r) {
-  if (resolveLock.value) return
-  if (!bothPicked.value) {
-    feedbackMsg('info', 'Спочатку обери число зліва і число справа!')
-    return
-  }
-  if (r === target.value) {
-    // correct: mark all three with the same color, then remove the result
-    resultFlash.value = r
-    stars.value++
-    resolveLock.value = true
-    feedbackMsg('ok', `Так! ${leftSel.value} × ${rightSel.value} = ${r} 🎉`)
-    playTone(true)
-    burstConfetti()
-    setTimeout(() => {
-      removed.value = new Set([...removed.value, r])
-      leftSel.value = null
-      rightSel.value = null
-      resultFlash.value = null
-      colorIdx.value++
-      resolveLock.value = false
-      feedbackMsg('', '')
-    }, 750)
-  } else {
-    wrongFlash.value = r
-    errors.value++
-    feedbackMsg('err', `Не зовсім! Порахуй ще: ${leftSel.value} × ${rightSel.value} = ?`)
-    playTone(false)
-    setTimeout(() => { wrongFlash.value = null }, 450)
-  }
-}
-
-/* ---------------- selection (version 2) ---------------- */
-function pickMix(cell) {
-  if (resolveLock.value) return
-  const idx = mixSel.value.indexOf(cell.id)
-  if (idx >= 0) {                          // toggle off
-    mixSel.value.splice(idx, 1)
-    return
-  }
-  if (mixSel.value.length >= 3) return     // three are already picked
-  mixSel.value.push(cell.id)
-  feedbackMsg('', '')
-  if (mixSel.value.length === 3) evaluateMix()
-}
-
-function evaluateMix() {
-  const sel = mixSel.value.map(id => mixCells.value.find(c => c.id === id))
-  // triplet is valid «on the fly»: the two smallest numbers are the factors,
-  // the largest is the product, and at least one factor is a selected level
-  // (the other is a co-factor 2..10)
-  const vals = sel.map(c => c.value).sort((a, b) => a - b)
-  const levels = activeNumbers.value
-  const ok = vals.length === 3 &&
-             vals[0] * vals[1] === vals[2] &&
-             (levels.includes(vals[0]) || levels.includes(vals[1]))
-
-  // mirror guard: this triplet is already learned (in any factor order)
-  // — don't count it again, the tiles stay in place
-  const key = `${vals[0]}x${vals[1]}=${vals[2]}`
-  if (ok && usedTriplets.value.has(key)) {
-    feedbackMsg('info', `${vals[0]} × ${vals[1]} = ${vals[2]} уже вивчено — обери іншу трійку 🙂`)
-    mixSel.value = []
-    return
-  }
-
-  if (ok) {
-    mixFlash.value = sel.map(c => c.id)
-    v2Stars.value++
-    resolveLock.value = true
-    feedbackMsg('ok', `Так! ${vals[0]} × ${vals[1]} = ${vals[2]} 🎉`)
-    playTone(true)
-    burstConfetti()
-    setTimeout(() => {
-      // mirrored triplet (3,2,6) = same as (2,3,6): stored sorted and counted
-      // exactly ONCE — all equations of this triplet disappear
-      const key = `${vals[0]}x${vals[1]}=${vals[2]}`
-      if (!usedTriplets.value.has(key)) {
-        usedTriplets.value = new Set([...usedTriplets.value, key])
-        const eqs = v2Equations.value.filter(e =>
-          e.p === vals[2] && ((e.a === vals[0] && e.b === vals[1]) || (e.a === vals[1] && e.b === vals[0])))
-        for (const eq of eqs) {
-          const i = pendingResults.value.indexOf(eq)
-          if (i >= 0) pendingResults.value.splice(i, 1)
-        }
-      }
-      const gone = new Set(sel.map(c => c.id))
-      mixCells.value = mixCells.value.filter(c => !gone.has(c.id))  // all three tiles vanish
-      ensureSolvable()
-      mixFlash.value = []
-      mixSel.value = []
-      colorIdx.value++
-      resolveLock.value = false
-      feedbackMsg('', '')
-    }, 750)
-  } else {
-    mixWrong.value = sel.map(c => c.id)
-    v2Errors.value++
-    feedbackMsg('err', 'Не збіглося! Потрібно: два множники та їхній добуток 🙂')
-    playTone(false)
-    setTimeout(() => {
-      mixWrong.value = []
-      mixSel.value = []
-    }, 450)
-  }
-}
-
-/* ---------------- version 2 table generation ----------------
-   The board is an anonymous shuffled pool of numbers: factors 2..9 (plus the
-   levels themselves) and the equation products. No «result» labels — a triplet
-   is checked «on the fly»: the two smallest numbers must produce the largest.
-   Each equation (level × 2..9) gets its OWN product tile on the board:
-   for levels 3, 6, 9 there are THREE «18» tiles on the board (3×6, 6×3, 9×2).
-   Factor tiles are stocked per equation as well:
-   - tile v is needed once for every equation where v participates,
-   - plus one extra for a square (2×2=4 consumes two «2» tiles at once). */
-function buildMixCells() {
-  const eqs = v2Equations.value
-  const levels = activeNumbers.value
-  const values = [...new Set([...v2Range, ...activeNumbers.value])]
-  const cells = []
-  for (const v of values) {
-    let count = 0
-    for (const e of eqs) {
-      if (e.a === v) count++           // v is the level of this equation
-      else if (e.b === v) count++      // v is a co-factor
-    }
-    // square: 2×2=4 — a single equation consumes TWO «2» tiles
-    if (levels.includes(v) && eqs.some(e => e.a === v && e.b === v)) count++
-    for (let i = 0; i < count; i++) {
-      cells.push({ id: `F${v}_${i}`, value: v })
-    }
-  }
-  for (const e of eqs) {
-    cells.push({ id: `R${e.a}x${e.b}`, value: e.p })
-  }
-  mixCells.value = shuffle(cells)
-}
-
-function shuffle(arr) {
-  const a = [...arr]
-  for (let i = 0; i < a.length; i++) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
-
-function freePairExists(p) {
-  const free = mixCells.value.filter(c => !mixSel.value.includes(c.id))
-  const levels = activeNumbers.value
-  for (let i = 0; i < free.length; i++) {
-    for (let j = i + 1; j < free.length; j++) {
-      const x = free[i].value, y = free[j].value
-      if (x * y !== p) continue
-      // extra validity check, as in evaluateMix:
-      // at least one factor must belong to the selected levels
-      if (!(levels.includes(x) || levels.includes(y))) continue
-      // mirror guard: an already-learned pair doesn't count as available
-      const key = `${Math.min(x, y)}x${Math.max(x, y)}=${p}`
-      if (usedTriplets.value.has(key)) continue
-      return true
-    }
-  }
-  return false
-}
-
-/* Solvability guarantee: after each solved product we check that every
-   unsolved equation still has its product tile on the board and a free
-   pair of factors. If not (the tile was consumed as a co-factor, or the
-   pair was spent) — silently restore the missing tiles to the board. */
-function ensureSolvable() {
-  for (const e of v2Equations.value) {
-    if (!pendingResults.value.some(pe => pe.a === e.a && pe.b === e.b)) continue
-    // the product tile of this equation may have been consumed as a factor — restore it
-    if (!mixCells.value.some(c => c.value === e.p)) {
-      mixCells.value = shuffle([
-        ...mixCells.value,
-        { id: `R${e.a}x${e.b}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.p },
-      ])
-    }
-    if (freePairExists(e.p)) continue
-    // restore the level + co-factor pair
-    mixCells.value = shuffle([
-      ...mixCells.value,
-      { id: `F${e.a}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.a },
-      { id: `F${e.b}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.b },
-    ])
-  }
-}
-
-/* ---------------- visuals (version 1) ---------------- */
-function cellClass(n, side) {
-  const sel = side === 'left' ? leftSel.value : rightSel.value
-  return {
-    selected: sel === n,
-    paired: bothPicked.value && sel === n,
-    otherSide: bothPicked.value && sel !== n,
-  }
-}
-
-function cellStyle(n, side) {
-  const sel = side === 'left' ? leftSel.value : rightSel.value
-  if (sel === n && bothPicked.value) {
-    return { background: curColor.value.bg, borderColor: curColor.value.border, color: curColor.value.text }
-  }
-  if (sel === n) {
-    return { borderColor: curColor.value.border, boxShadow: `inset 0 0 0 3px ${curColor.value.bg}` }
-  }
-  return {}
-}
-
-function resultClass(r) {
-  return {
-    flash: resultFlash.value === r,
-    wrong: wrongFlash.value === r,
-  }
-}
-
-function resultStyle(r) {
-  if (resultFlash.value === r) {
-    return { background: curColor.value.bg, borderColor: curColor.value.border, color: curColor.value.text }
-  }
-  return {}
-}
-
-/* ---------------- visuals (version 2) ---------------- */
-function mixCellClass(cell) {
-  return {
-    selected: mixSel.value.includes(cell.id),
-    flash: mixFlash.value.includes(cell.id),
-    wrong: mixWrong.value.includes(cell.id),
-  }
-}
-
-function mixCellStyle(cell) {
-  if (mixFlash.value.includes(cell.id)) {
-    return { background: curColor.value.bg, borderColor: curColor.value.border, color: curColor.value.text }
-  }
-  if (mixSel.value.includes(cell.id)) {
-    return { borderColor: curColor.value.border, boxShadow: `inset 0 0 0 3px ${curColor.value.bg}` }
-  }
-  return {}
-}
-
-/* ---------------- helpers ---------------- */
-function burstConfetti() {
-  const colors = ['#ff8fab', '#74c0fc', '#69db7c', '#ffd43b', '#b197fc', '#ffa94d']
-  confetti.value = Array.from({ length: 36 }, (_, i) => ({
-    x: Math.random() * 100,
-    delay: Math.random() * 0.6,
-    color: colors[i % colors.length],
-  }))
-  setTimeout(() => { confetti.value = [] }, 2600)
-}
-
-let audioCtx = null
-function playTone(good) {
-  try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)()
-    const o = audioCtx.createOscillator()
-    const g = audioCtx.createGain()
-    o.connect(g); g.connect(audioCtx.destination)
-    o.type = 'sine'
-    if (good) {
-      o.frequency.setValueAtTime(660, audioCtx.currentTime)
-      o.frequency.setValueAtTime(880, audioCtx.currentTime + 0.12)
-      g.gain.setValueAtTime(0.15, audioCtx.currentTime)
-      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35)
-      o.start(); o.stop(audioCtx.currentTime + 0.35)
-    } else {
-      o.frequency.setValueAtTime(220, audioCtx.currentTime)
-      g.gain.setValueAtTime(0.12, audioCtx.currentTime)
-      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25)
-      o.start(); o.stop(audioCtx.currentTime + 0.25)
-    }
-  } catch { /* audio not available — game still works */ }
-}
-
-function switchVersion(v) {
-  if (version.value === v) return
-  version.value = v
-  feedbackMsg('', '')
-  // first entry into v2, if the board hasn't been built for the current levels yet
-  if (v === 2 && mixCells.value.length === 0 && resultsLeft.value === 0 && v2Equations.value.length > 0 && pendingResults.value.length === 0) {
-    pendingResults.value = [...v2Equations.value]
-    buildMixCells()
-  }
-}
-
-function applyLevels() {
-  if (levelsTmp.value.length === 0) return
-  activeLevels.value = [...levelsTmp.value].sort((a, b) => a - b)
-  showSettings.value = false
-  resetAll()
-  resetMix()
-}
-
-function resetAll() {
-  leftSel.value = null
-  rightSel.value = null
-  removed.value = new Set()
-  resultFlash.value = null
-  wrongFlash.value = null
-  stars.value = 0
-  errors.value = 0
-  colorIdx.value = 0
-  confetti.value = []
-  resolveLock.value = false
-  feedbackMsg('', '')
-}
-
-function resetMix() {
-  mixSel.value = []
-  mixFlash.value = []
-  mixWrong.value = []
-  usedTriplets.value = new Set()
-  pendingResults.value = [...v2Equations.value]
-  v2Stars.value = 0
-  v2Errors.value = 0
-  buildMixCells()
-}
-
-function resetCurrent() {
-  if (version.value === 1) resetAll()
-  else resetMix()
-}
+import { onMounted } from 'vue'
+import VersionClassic from './VersionClassic.vue'
+import VersionMixed from './VersionMixed.vue'
+import {
+  activeLevels, levelsTmp, showSettings, version,
+  feedback, confetti, resolveLock,
+} from './gameStore.js'
+import {
+  displayStars, displayErrors, displayDone, displayTotal, hintText,
+  switchVersion, applyLevels, resetCurrent,
+} from './gameControls.js'
+import {
+  stars, errors, removed, leftSel,
+} from './versionClassic.js'
+import {
+  mixCells, mixSel, mixFlash, mixWrong, pendingResults, usedTriplets,
+  v2Stars, v2Errors, resetMixed,
+} from './versionMixed.js'
 
 onMounted(() => {
   levelsTmp.value = [...activeLevels.value]
-  resetMix()
+  resetMixed()
+})
+
+/* exposed for the vitest suites: state now lives in shared modules,
+   so the tests reach it through the shell's exposed proxy */
+defineExpose({
+  version,
+  activeLevels, levelsTmp,
+  stars, errors, removed, leftSel, resolveLock,
+  mixCells, mixSel, mixFlash, mixWrong, pendingResults, usedTriplets,
+  v2Stars, v2Errors, displayStars,
+  applyLevels,
 })
 </script>
 
@@ -643,46 +127,6 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .btn.ver.active { background: #74c0fc; color: #fff; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.tables {
-  display: flex; gap: 14px; justify-content: center; align-items: flex-start;
-  flex-wrap: wrap;
-}
-.sign { font-size: 2.2rem; font-weight: 800; align-self: center; color: #888; }
-
-.table-card {
-  background: #fff; border-radius: 16px; padding: 12px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
-}
-.table-card h2 { text-align: center; margin: 0 0 10px; font-size: 1.05rem; color: #555; }
-
-.grid { display: grid; gap: 8px; }
-.numbers-grid { grid-template-columns: repeat(1, 72px); }
-.results-grid { grid-template-columns: repeat(4, 72px); }
-.mix-grid {
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
-  width: min(720px, 86vw);
-}
-
-.cell {
-  border: 2px solid #dee2e6; border-radius: 12px;
-  padding: 0; height: 56px; font-size: 1.5rem; font-weight: 800;
-  background: #f8f9fa; color: #343a40; cursor: pointer;
-  font-family: inherit; transition: transform 0.08s, background 0.15s;
-}
-.cell:hover { transform: scale(1.06); }
-.cell:active { transform: scale(0.95); }
-.cell.selected { animation: pop 0.15s ease; }
-.cell.otherSide { opacity: 0.75; }
-.result-cell { height: 52px; font-size: 1.25rem; }
-
-.mix-card { display: flex; flex-direction: column; align-items: center; }
-.mix-cell { height: 52px; font-size: 1.3rem; }
-.cell.flash { animation: pop 0.25s ease; }
-.cell.wrong { animation: shake 0.4s ease; background: #ffc9c9 !important; border-color: #fa5252 !important; color: #c92a2a !important; }
-
-.results-card { min-width: 340px; }
-.win-note { text-align: center; font-weight: 700; color: #2b8a3e; }
-
 .feedback {
   text-align: center; margin-top: 14px; font-size: 1.1rem; font-weight: 700;
   padding: 8px 14px; border-radius: 10px; display: inline-block;
@@ -699,15 +143,6 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 }
 @keyframes fall {
   to { transform: translateY(105vh) rotate(720deg); opacity: 0.8; }
-}
-@keyframes pop {
-  50% { transform: scale(1.18); }
-}
-@keyframes shake {
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(6px); }
-  60% { transform: translateX(-4px); }
-  80% { transform: translateX(4px); }
 }
 
 .overlay {
@@ -728,11 +163,4 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .check input { width: 18px; height: 18px; }
 .warn { color: #c92a2a; font-weight: 600; }
 .panel-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
-
-@media (max-width: 760px) {
-  .numbers-grid { grid-template-columns: repeat(1, 56px); }
-  .results-grid { grid-template-columns: repeat(4, 56px); }
-  .cell { height: 46px; font-size: 1.15rem; }
-  .sign { display: none; }
-}
 </style>

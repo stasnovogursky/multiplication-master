@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import App from '../src/App.vue'
+import { resetGameState } from '../src/gameControls.js'
 
 // jsdom has no AudioContext — the app guards this internally, silence it anyway
 vi.stubGlobal('AudioContext', undefined)
 
 async function mountApp() {
+  resetGameState()          // module-level state is a singleton — start fresh each mount
   const w = mount(App)
   await flushPromises()
   return w
