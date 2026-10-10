@@ -23,13 +23,13 @@
 
     <p class="hint">{{ hintText }}</p>
 
-    <!-- ================= ВАРІАНТ 1: дві таблиці чисел + результати ================= -->
+    <!-- ================= VARIANT 1: two number tables + results ================= -->
     <div v-if="version === 1" class="tables">
       <div class="table-card">
         <h2>Число 1</h2>
         <div class="grid numbers-grid">
           <button
-            v-for="n in activeNumbers"
+            v-for="n in allFactorNumbers"
             :key="'L' + n"
             class="cell"
             :class="cellClass(n, 'left')"
@@ -45,7 +45,7 @@
         <h2>Число 2</h2>
         <div class="grid numbers-grid">
           <button
-            v-for="n in activeNumbers"
+            v-for="n in allFactorNumbers"
             :key="'R' + n"
             class="cell"
             :class="cellClass(n, 'right')"
@@ -75,7 +75,7 @@
       </div>
     </div>
 
-    <!-- ================= ВАРІАНТ 2: одна змішана таблиця, трійки в будь-якому порядку ================= -->
+    <!-- ================= VARIANT 2: one mixed table, triplets in any order ================= -->
     <div v-else class="tables">
       <div class="table-card mix-card">
         <h2>Знайди трійку: множник × множник = відповідь</h2>
@@ -133,7 +133,7 @@ const activeLevels = ref([2, 3, 4, 5])
 const levelsTmp = ref([...activeLevels.value])
 const showSettings = ref(false)
 
-const version = ref(1)   // 1 = класика (дві таблиці), 2 = одна змішана таблиця
+const version = ref(1)   // 1 = classic (two factor tables), 2 = one mixed table
 
 const colorIdx = ref(0)
 const feedback = ref({ type: '', text: '' })
@@ -151,11 +151,11 @@ const stars = ref(0)
 const errors = ref(0)
 
 /* ---------------- version 2 state ---------------- */
-const mixCells = ref([])             // [{ id, value }] — анонімні числа, перемішані
-const pendingResults = ref([])       // добутки, які ще треба розв'язати (по одному на рівність)
-const usedTriplets = ref(new Set())  // вже вивчені трійки «a×b=p» (множники сортовані):
-                                     // дзеркальна трійка (3,2,6) = та сама, що (2,3,6) —
-                                     // повторно НЕ зараховується, щоб не зіпсувати решту варіантів
+const mixCells = ref([])             // [{ id, value }] — anonymous shuffled numbers
+const pendingResults = ref([])       // products still to solve (one per equation)
+const usedTriplets = ref(new Set())  // already-learned «a×b=p» triplets (factors sorted):
+                                     // a mirrored triplet (3,2,6) = same as (2,3,6) —
+                                     // NOT counted again, to keep the other variants intact
 const mixSel = ref([])               // ids of currently selected cells (up to 3)
 const mixFlash = ref([])             // ids of the correct triplet being celebrated
 const mixWrong = ref([])             // ids of the wrong triplet being shaken
@@ -176,14 +176,19 @@ const COLORS = [
 ]
 
 /* ---------------- derived (shared) ---------------- */
+// v1: left/right tables always show ALL factors 2..9 regardless of selected levels;
+// only the result table follows the level selection.
+const allFactorNumbers = Array.from({ length: 8 }, (_, i) => i + 2)
+
 const activeNumbers = computed(() =>
   [...activeLevels.value].sort((a, b) => a - b)
 )
 
 const allResults = computed(() => {
   const s = new Set()
+  // v1: results are level × any factor 2..9
   for (const a of activeNumbers.value)
-    for (const b of activeNumbers.value) s.add(a * b)
+    for (const b of allFactorNumbers) s.add(a * b)
   return [...s].sort((x, y) => x - y)
 })
 
@@ -215,10 +220,10 @@ const target = computed(() =>
 )
 
 /* ---------------- derived (version 2) ----------------
-   Рівняння = рівень × 2..9, БЕЗ дзеркал: 6×3 — та сама трійка, що 3×6,
-   тому тримаємо лише один порядок (a < b, коли обидва множники — рівні).
-   Для рівнів 3, 6, 9 добуток 18 дають рівно ДВІ трійки: (3,6) та (9,2) —
-   дві плитки «18» на дошці. */
+   Equations = level × 2..9, WITHOUT mirrors: 6×3 is the same triplet as 3×6,
+   so we keep only one order (a < b when both factors are levels).
+   For levels 3, 6, 9 the product 18 comes from exactly TWO triplets: (3,6) and (9,2) —
+   two «18» tiles on the board. */
 const v2Range = Array.from({ length: 8 }, (_, i) => i + 2)
 
 const v2Equations = computed(() => {
@@ -226,7 +231,7 @@ const v2Equations = computed(() => {
   const levels = new Set(activeNumbers.value)
   for (const a of activeNumbers.value)
     for (const b of v2Range) {
-      // дзеркало вже є як (b, a): пропускаємо старший порядок
+      // mirror already exists as (b, a): skip the higher order
       if (a > b && levels.has(b)) continue
       eqs.push({ a, b, p: a * b })
     }
@@ -236,7 +241,7 @@ const v2Equations = computed(() => {
 const resultsLeft = computed(() => pendingResults.value.length)
 
 const visibleMixCells = computed(() => {
-  if (resultsLeft.value === 0) return []        // все вивчено — дошка порожня
+  if (resultsLeft.value === 0) return []        // all learned — board is empty
   return mixCells.value
 })
 
@@ -258,6 +263,14 @@ function selectRight(n) {
   const product = (leftSel.value ?? n) * n
   if (leftSel.value !== null && removed.value.has(product)) {
     feedbackMsg('info', `Супер! ${leftSel.value} × ${n} = ${product} уже вивчено — обери інший приклад 🙂`)
+    return
+  }
+  // a pair where neither factor belongs to the selected levels — its product
+  // isn't on the board, so hint right away instead of leaving a dead end
+  if (leftSel.value !== null &&
+      !activeNumbers.value.includes(leftSel.value) &&
+      !activeNumbers.value.includes(n)) {
+    feedbackMsg('info', `${leftSel.value} × ${n} не входить у вибрані рівні — хоча б один множник має бути з них 🙂`)
     return
   }
   rightSel.value = n
@@ -312,16 +325,17 @@ function pickMix(cell) {
 
 function evaluateMix() {
   const sel = mixSel.value.map(id => mixCells.value.find(c => c.id === id))
-  // трійка валідна «на льоту»: два найменші числа — множники, найбільше — добуток,
-  // і хоча б один множник належить обраним рівням (інший — співмножник 2..10)
+  // triplet is valid «on the fly»: the two smallest numbers are the factors,
+  // the largest is the product, and at least one factor is a selected level
+  // (the other is a co-factor 2..10)
   const vals = sel.map(c => c.value).sort((a, b) => a - b)
   const levels = activeNumbers.value
   const ok = vals.length === 3 &&
              vals[0] * vals[1] === vals[2] &&
              (levels.includes(vals[0]) || levels.includes(vals[1]))
 
-  // дзеркальний захист: цю трійку вже вивчено (у будь-якому порядку множників)
-  // — не зараховуємо повторно, плитки залишаються на місці
+  // mirror guard: this triplet is already learned (in any factor order)
+  // — don't count it again, the tiles stay in place
   const key = `${vals[0]}x${vals[1]}=${vals[2]}`
   if (ok && usedTriplets.value.has(key)) {
     feedbackMsg('info', `${vals[0]} × ${vals[1]} = ${vals[2]} уже вивчено — обери іншу трійку 🙂`)
@@ -337,8 +351,8 @@ function evaluateMix() {
     playTone(true)
     burstConfetti()
     setTimeout(() => {
-      // дзеркальна трійка (3,2,6) = та сама, що (2,3,6): зберігаємо в сортованому
-      // вигляді й зараховуємо ОДИН раз — зникають усі рівності цієї трійки
+      // mirrored triplet (3,2,6) = same as (2,3,6): stored sorted and counted
+      // exactly ONCE — all equations of this triplet disappear
       const key = `${vals[0]}x${vals[1]}=${vals[2]}`
       if (!usedTriplets.value.has(key)) {
         usedTriplets.value = new Set([...usedTriplets.value, key])
@@ -350,7 +364,7 @@ function evaluateMix() {
         }
       }
       const gone = new Set(sel.map(c => c.id))
-      mixCells.value = mixCells.value.filter(c => !gone.has(c.id))  // усі три плитки зникають
+      mixCells.value = mixCells.value.filter(c => !gone.has(c.id))  // all three tiles vanish
       ensureSolvable()
       mixFlash.value = []
       mixSel.value = []
@@ -371,14 +385,14 @@ function evaluateMix() {
 }
 
 /* ---------------- version 2 table generation ----------------
-   Дошка — анонімний перемішаний пул чисел: множники 2..9 (плюс самі рівні)
-   та добутки рівнянь. Жодних позначок «результат» — трійка перевіряється
-   «на льоту»: два найменші числа мають дати найбільше.
-   Кожна рівність (рівень × 2..9) дає на дошці СВОЮ плитку-добуток:
-   для рівнів 3, 6, 9 на дошці є ТРИ плитки «18» (3×6, 6×3, 9×2).
-   Плитки-множники stocking так само на рівність:
-   - плитка v потрібна один раз на кожну рівність, де v бере участь,
-   - плюс одна додаткова для квадрата (2×2=4 з'їдає дві плитки «2» одразу). */
+   The board is an anonymous shuffled pool of numbers: factors 2..9 (plus the
+   levels themselves) and the equation products. No «result» labels — a triplet
+   is checked «on the fly»: the two smallest numbers must produce the largest.
+   Each equation (level × 2..9) gets its OWN product tile on the board:
+   for levels 3, 6, 9 there are THREE «18» tiles on the board (3×6, 6×3, 9×2).
+   Factor tiles are stocked per equation as well:
+   - tile v is needed once for every equation where v participates,
+   - plus one extra for a square (2×2=4 consumes two «2» tiles at once). */
 function buildMixCells() {
   const eqs = v2Equations.value
   const levels = activeNumbers.value
@@ -387,10 +401,10 @@ function buildMixCells() {
   for (const v of values) {
     let count = 0
     for (const e of eqs) {
-      if (e.a === v) count++           // v — рівень цієї рівності
-      else if (e.b === v) count++      // v — співмножник
+      if (e.a === v) count++           // v is the level of this equation
+      else if (e.b === v) count++      // v is a co-factor
     }
-    // квадрат: 2×2=4 — одна рівність споживає ДВІ плитки «2»
+    // square: 2×2=4 — a single equation consumes TWO «2» tiles
     if (levels.includes(v) && eqs.some(e => e.a === v && e.b === v)) count++
     for (let i = 0; i < count; i++) {
       cells.push({ id: `F${v}_${i}`, value: v })
@@ -418,10 +432,10 @@ function freePairExists(p) {
     for (let j = i + 1; j < free.length; j++) {
       const x = free[i].value, y = free[j].value
       if (x * y !== p) continue
-      // додаткова перевірка валідності, як в evaluateMix:
-      // хоча б один множник належить обраним рівням
+      // extra validity check, as in evaluateMix:
+      // at least one factor must belong to the selected levels
       if (!(levels.includes(x) || levels.includes(y))) continue
-      // дзеркальний захист: пару, яку вже вивчено, не рахуємо доступною
+      // mirror guard: an already-learned pair doesn't count as available
       const key = `${Math.min(x, y)}x${Math.max(x, y)}=${p}`
       if (usedTriplets.value.has(key)) continue
       return true
@@ -430,14 +444,14 @@ function freePairExists(p) {
   return false
 }
 
-/* Гарантія розв'язності: після кожного розв'язаного добутку перевіряємо,
-   що кожна нерозв'язана рівність має на дошці свою плитку-добуток і вільну
-   пару множників. Якщо ні (плитку з'їли як співмножник, або пару витратили)
-   — тихо повертаємо бракуючі плитки на дошку. */
+/* Solvability guarantee: after each solved product we check that every
+   unsolved equation still has its product tile on the board and a free
+   pair of factors. If not (the tile was consumed as a co-factor, or the
+   pair was spent) — silently restore the missing tiles to the board. */
 function ensureSolvable() {
   for (const e of v2Equations.value) {
     if (!pendingResults.value.some(pe => pe.a === e.a && pe.b === e.b)) continue
-    // плитка-добуток цієї рівності може бути з'їдена як множник — повертаємо
+    // the product tile of this equation may have been consumed as a factor — restore it
     if (!mixCells.value.some(c => c.value === e.p)) {
       mixCells.value = shuffle([
         ...mixCells.value,
@@ -445,7 +459,7 @@ function ensureSolvable() {
       ])
     }
     if (freePairExists(e.p)) continue
-    // повертаємо пару рівня + співмножника
+    // restore the level + co-factor pair
     mixCells.value = shuffle([
       ...mixCells.value,
       { id: `F${e.a}_${Date.now()}_${Math.random().toString(36).slice(2)}`, value: e.a },
@@ -546,7 +560,7 @@ function switchVersion(v) {
   if (version.value === v) return
   version.value = v
   feedbackMsg('', '')
-  // перший вхід у v2, якщо дошку ще не будували для поточних рівнів
+  // first entry into v2, if the board hasn't been built for the current levels yet
   if (v === 2 && mixCells.value.length === 0 && resultsLeft.value === 0 && v2Equations.value.length > 0 && pendingResults.value.length === 0) {
     pendingResults.value = [...v2Equations.value]
     buildMixCells()
@@ -642,7 +656,7 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .table-card h2 { text-align: center; margin: 0 0 10px; font-size: 1.05rem; color: #555; }
 
 .grid { display: grid; gap: 8px; }
-.numbers-grid { grid-template-columns: repeat(2, 72px); }
+.numbers-grid { grid-template-columns: repeat(1, 72px); }
 .results-grid { grid-template-columns: repeat(4, 72px); }
 .mix-grid {
   grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
@@ -716,7 +730,7 @@ h1 { text-align: center; font-size: 1.6rem; margin: 8px 0 12px; }
 .panel-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
 
 @media (max-width: 760px) {
-  .numbers-grid { grid-template-columns: repeat(4, 56px); }
+  .numbers-grid { grid-template-columns: repeat(1, 56px); }
   .results-grid { grid-template-columns: repeat(4, 56px); }
   .cell { height: 46px; font-size: 1.15rem; }
   .sign { display: none; }

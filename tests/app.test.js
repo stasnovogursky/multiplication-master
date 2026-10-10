@@ -39,11 +39,11 @@ describe('Multiplication Master', () => {
   it('renders two factor tables and a results table', () => {
     const cards = w.findAll('.table-card')
     expect(cards.length).toBe(3)
-    // default levels 2..5 -> each factor table has 4 cells
-    expect(leftCells(w).length).toBe(4)
-    expect(rightCells(w).length).toBe(4)
-    // products 2..25, unique -> {2..25} minus primes 7,11,13,14,17,19,21,22,23 = 10
-    expect(resultCells(w).length).toBe(10)
+    // v1: factor tables always show ALL numbers 2..9, regardless of levels
+    expect(leftCells(w).length).toBe(8)
+    expect(rightCells(w).length).toBe(8)
+    // products = levels(2..5) × factors(2..9), unique: {4,6,8,...,45} = 22
+    expect(resultCells(w).length).toBe(22)
   })
 
   it('marks left+right+result with the SAME color on a correct pick', async () => {
@@ -125,16 +125,19 @@ describe('Multiplication Master', () => {
     w.vm.levelsTmp = [7, 8]
     await w.vm.applyLevels()
     await flushPromises()
-    expect(leftCells(w).map(c => c.text())).toEqual(['7', '8'])
-    expect(resultCells(w).map(c => c.text())).toEqual(['49', '56', '56', '64'].filter((v, i, a) => a.indexOf(v) === i))
+    // v1: factor tables are unaffected by levels; results = levels × all factors 2..9
+    expect(leftCells(w).map(c => c.text())).toEqual(['2', '3', '4', '5', '6', '7', '8', '9'])
+    // 7×{2..9} ∪ 8×{2..9}, unique & sorted (81=9×9 is NOT included — 9 is not a level)
+    expect(resultCells(w).map(c => c.text())).toEqual(
+      ['14', '16', '21', '24', '28', '32', '35', '40', '42', '48', '49', '56', '63', '64', '72'])
   })
 
   it('finishing all results shows the win note', async () => {
-    // levels 2..5 -> 10 unique products; play them all
+    // levels 2..5 × factors 2..9 -> 22 unique products; play them all
     const done = []
     outer:
     for (const a of [2, 3, 4, 5]) {
-      for (const b of [2, 3, 4, 5]) {
+      for (const b of [2, 3, 4, 5, 6, 7, 8, 9]) {
         const p = a * b
         if (done.includes(p)) continue
         done.push(p)
@@ -156,6 +159,6 @@ describe('Multiplication Master', () => {
     await flushPromises()
     expect(resultCells(w).length).toBe(0)
     expect(w.find('.win-note').exists()).toBe(true)
-    expect(w.vm.stars).toBe(10)
+    expect(w.vm.stars).toBe(22)
   }, 30000)
 })

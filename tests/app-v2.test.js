@@ -170,7 +170,7 @@ describe('Multiplication Master — version 2 (single mixed table)', () => {
     const texts = w.vm.mixCells.map(c => String(c.value))
     for (const n of ['7', '8']) expect(texts).toContain(n)
     for (const p of ['49', '56', '64', '72']) expect(texts).toContain(p)
-    expect(texts).not.toContain('80')  // ×10 більше немає
+    expect(texts).not.toContain('80')  // ×10 is gone
     expect(texts).not.toContain('11')
     // mirror-free model: 15 equations (8×7 dropped as mirror of 7×8) → 15 result tiles,
     // all unique — 56 appears once (7×8 only)
